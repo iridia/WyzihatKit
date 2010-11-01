@@ -67,6 +67,8 @@ _EditorEvents = [
     BOOL            enabled;
     BOOL            autohidesScrollers @accessors;
 
+    CPString        _html;
+
     CPString        lastFont;
     CPString        lastColorString;
     CPColor         lastColor;
