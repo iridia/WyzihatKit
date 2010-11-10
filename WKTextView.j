@@ -441,6 +441,8 @@ _EditorEvents = [
 
 - (void)_didChange
 {
+	[self willChangeValueForKey:@"htmlValue"];
+
     // When the text changes, the height of the content may change.
     [self _updateScrollbar];
 
@@ -448,6 +450,8 @@ _EditorEvents = [
     {
         [delegate textViewDidChange:self];
     }
+
+	[self didChangeValueForKey:@"htmlValue"];
 
 }
 
@@ -514,17 +518,25 @@ _EditorEvents = [
 
 - (CPString)htmlValue
 {
+
+    if ([self editor] != nil)
     return [self editor].innerHTML;
+    	
+    return _html;
 }
 
 - (void)setHtmlValue:(CPString)html
 {
+    [self willChangeValueForKey:@"htmlValue"];
+
+    _html = html;
+	
     if ([self editor] != nil)
         [self editor].innerHTML = html;
-    else
-        _html = html;
 
     [self _didChange];
+
+    [self didChangeValueForKey:@"htmlValue"];
 }
 
 - (CPString)textValue
