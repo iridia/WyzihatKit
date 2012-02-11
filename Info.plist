@@ -5,12 +5,25 @@
 	<key>CPBundleIdentifier</key>
 	<string>net.wireload.WyzihatKit</string>
 	<key>CPBundleInfoDictionaryVersion</key>
-	<string>6.0</string>
+	<integer>6</integer>
 	<key>CPBundleName</key>
 	<string>WyzihatKit</string>
 	<key>CPBundlePackageType</key>
 	<string>FMWK</string>
 	<key>CPBundleVersion</key>
 	<string>0.1</string>
+	<key>CPBundleEnvironments</key>
+	<array>
+		<string>ObjJ</string>
+	</array>
+	<key>CPBundleExecutable</key>
+	<string>WyzihatKit.sj</string>
+	<key>CPBundleReplacedFiles</key>
+	<dict>
+		<key>ObjJ</key>
+		<array>
+			<string>WKTextView.j</string>
+		</array>
+	</dict>
 </dict>
 </plist>

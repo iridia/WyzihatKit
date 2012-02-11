@@ -11,11 +11,12 @@ var ENV = require("system").env,
     JAKE = require("jake"),
     task = JAKE.task,
     FileList = JAKE.FileList,
-    app = require("cappuccino/jake").app,
+    framework = require("cappuccino/jake").framework,
+	browserEnvironment = require("objective-j/jake/environment").Browser,
     configuration = ENV["CONFIG"] || ENV["CONFIGURATION"] || ENV["c"] || "Debug",
     OS = require("os");
 
-app ("wyzihatkit", function(task)
+framework ("wyzihatkit", function(task)
 {
     task.setBuildIntermediatesPath(FILE.join("Build", "wyzihatkit.build", configuration));
     task.setBuildPath(FILE.join("Build", configuration));
@@ -29,11 +30,15 @@ app ("wyzihatkit", function(task)
     task.setSources((new FileList("**/*.j")).exclude(FILE.join("Build", "**")).exclude(FILE.join("sample", "**")).exclude(FILE.join("sample.dist", "**")));
     task.setResources(new FileList("Resources/**"));
     task.setInfoPlistPath("Info.plist");
+	
+	task.setEnvironments([browserEnvironment]);
+	task.setFlattensSources(true);
 
     if (configuration === "Debug")
         task.setCompilerFlags("-DDEBUG -g");
     else
         task.setCompilerFlags("-O");
+	
 });
 
 function printResults(configuration)
