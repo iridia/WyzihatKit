@@ -23,9 +23,9 @@
       height: 100%;
 
       padding-right: 12px;
-  
+
       /*  The right padding hides the native scrollbar.
-        However the real width of the native scrollbar varies, 
+        However the real width of the native scrollbar varies,
         so we use a sniffer script. */
 
       overflow-x: hidden;
@@ -36,65 +36,82 @@
       padding: 4px;
     }
 
-    textarea {
-      display: none;
+    #textarea {
+      outline: 0px solid transparent;
+      background-color: transparent;
+      border: 0px;
     }
   </style>
 
-  <script type="text/javascript" src="wysihat.js"></script>
-  
+  <script type="text/javascript" src="closure-editor.js"></script>
 </head>
 
 <body>
-  
-  <script type="text/javascript" charset="utf-8">
-    Event.observe(window, 'load', function() {
-      __wysihat_editor = WysiHat.Editor.attach('textarea');
-      $('loading').hide();
-    });
-  </script>
-  
-  <p id="loading">Loading editor...</p>
   <div id="scrolldiv">
     <div id="padder">
-      <textarea id="textarea"></textarea>
+      <div id='textarea'></div>
     </div>
   </div>
-
   <script type="text/javascript" charset="utf-8">
-    //  http://www.fleegix.org/articles/2006-05-30-getting-the-scrollbar-width-in-pixels
+   // The regular 250 causes noticable UI delays. Apply 1/10s is unnoticable rule of thumb.
+  goog.editor.Field.DELAYED_CHANGE_FREQUENCY = 100;
 
-    function getScrollerWidth () {
-      var scr = null;
-      var inn = null;
-      var wNoScroll = 0;
-      var wScroll = 0;
+  __closure_editor = new goog.editor.SeamlessField('textarea');
+  __closure_editor.__scroll_div = document.getElementById('scrolldiv');
+  __closure_editor.Command = goog.editor.Command;
 
-      scr = document.createElement('div');
-      scr.style.position = 'absolute';
-      scr.style.top = '-1000px';
-      scr.style.left = '-1000px';
-      scr.style.width = '100px';
-      scr.style.height = '50px';
-      scr.style.overflow = 'hidden';
+  __closure_editor.registerPlugin(new goog.editor.plugins.BasicTextFormatter());
+  __closure_editor.registerPlugin(new goog.editor.plugins.RemoveFormatting());
+  __closure_editor.registerPlugin(new goog.editor.plugins.UndoRedo());
+  __closure_editor.registerPlugin(new goog.editor.plugins.ListTabHandler());
+  __closure_editor.registerPlugin(new goog.editor.plugins.SpacesTabHandler());
+  __closure_editor.registerPlugin(new goog.editor.plugins.EnterHandler());
+  __closure_editor.registerPlugin(new goog.editor.plugins.HeaderFormatter());
+  //__closure_editor.registerPlugin(new goog.editor.plugins.LinkDialogPlugin());
 
-      inn = document.createElement('div');
-      inn.style.width = '100%';
-      inn.style.height = '200px';
+  function __fieldChange() {
+    __closure_editor.__fieldChangeExternal();
+  }
 
-      scr.appendChild(inn);
-      document.body.appendChild(scr);
+  function __selectionChange() {
+    __closure_editor.__selectionChangeExternal();
+  }
 
-      wNoScroll = inn.offsetWidth;
-      scr.style.overflow = 'auto';
-      wScroll = inn.offsetWidth;
-      document.body.removeChild(document.body.lastChild);
+  goog.events.listen(__closure_editor, goog.editor.Field.EventType.DELAYEDCHANGE, __fieldChange);
+  goog.events.listen(__closure_editor, goog.editor.Field.EventType.SELECTIONCHANGE, __selectionChange);
 
-      return (wNoScroll - wScroll);
-    }
+  //  http://www.fleegix.org/articles/2006-05-30-getting-the-scrollbar-width-in-pixels
 
-    document.getElementById("scrolldiv").style.paddingRight = (getScrollerWidth() || 0) + "px";
+  function getScrollerWidth () {
+    var scr = null;
+    var inn = null;
+    var wNoScroll = 0;
+    var wScroll = 0;
+
+    scr = document.createElement('div');
+    scr.style.position = 'absolute';
+    scr.style.top = '-1000px';
+    scr.style.left = '-1000px';
+    scr.style.width = '100px';
+    scr.style.height = '50px';
+    scr.style.overflow = 'hidden';
+
+    inn = document.createElement('div');
+    inn.style.width = '100%';
+    inn.style.height = '200px';
+
+    scr.appendChild(inn);
+    document.body.appendChild(scr);
+
+    wNoScroll = inn.offsetWidth;
+    scr.style.overflow = 'auto';
+    wScroll = inn.offsetWidth;
+    document.body.removeChild(document.body.lastChild);
+
+    return (wNoScroll - wScroll);
+  }
+
+  document.getElementById("scrolldiv").style.paddingRight = (getScrollerWidth() || 0) + "px";
   </script>
-
 </body>
 </html>

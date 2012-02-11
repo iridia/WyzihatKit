@@ -6,6 +6,9 @@
  *
  */
 
+@import <AppKit/AppKit.j>
+@import <Foundation/CPTimer.j>
+
 @implementation _WKWebView : CPWebView
 
 - (DOMWindow)DOMWindow
@@ -47,7 +50,7 @@ _EditorEvents = [
 ]
 
 /*!
-    A WYSIHAT based rich text editor widget.
+    A closure editor based rich text editor widget.
 
     Beware of the load times. Wait for the load event.
 */
@@ -74,6 +77,9 @@ _EditorEvents = [
     float           _verticalLineScroll;
     float           _verticalPageScroll;
 
+    boolean         _cursorPlaced;
+
+    boolean         _isTryingToBecomeFirstResponder;
 }
 
 - (id)initWithFrame:(CGRect)aFrame
@@ -116,7 +122,23 @@ _EditorEvents = [
 {
     // If the frame reloads for whatever reason, the editor is gone.
     editor = nil;
+    _cursorPlaced = NO;
     [super _startedLoading];
+}
+
+- (void)viewDidHide
+{
+    // Editor can't be used at all while hidden due to the iframe unloading.
+    editor = nil;
+    _cursorPlaced = NO;
+}
+
+- (void)viewDidUnhide
+{
+    if (editor === nil)
+        [self checkLoad];
+    else
+        [self _actualizeEnabledState];
 }
 
 - (void)_finishedLoading
@@ -127,31 +149,36 @@ _EditorEvents = [
 
 - (void)checkLoad
 {
+    // We can't load if hidden. Load checking will be resumed by viewDidUnhide later.
+    if ([self isHiddenOrHasHiddenAncestor])
+        return;
+
     // Is the editor ready?
-    var maybeEditor = [self objectByEvaluatingJavaScriptFromString:"typeof(__wysihat_editor) != 'undefined' ? __wysihat_editor : null"];
-    if (maybeEditor && maybeEditor.parentNode && maybeEditor.parentNode.parentNode)
+    var maybeEditor = [self objectByEvaluatingJavaScriptFromString:"typeof(__closure_editor) != 'undefined' ? __closure_editor : null"];
+
+    if (maybeEditor)
     {
+        _scrollDiv = maybeEditor.__scroll_div;
         [self setEditor:maybeEditor];
 
         if (loadTimer)
         {
             [loadTimer invalidate];
             loadTimer = nil;
-         }
+        }
 
         if (_html != nil)
-            [self editor].innerHTML = _html;
+            [self setHtmlValue:_html];
 
         if ([delegate respondsToSelector:@selector(textViewDidLoad:)])
-        {
             [delegate textViewDidLoad:self];
-        }
+
+        return;
     }
-    else
-    {
-        if (!loadTimer)
-            loadTimer = [CPTimer scheduledTimerWithTimeInterval:0.1 target:self selector:"checkLoad" userInfo:nil repeats:YES];
-    }
+
+    // If we still don't have an editor, check again later.
+    if (!loadTimer || ![loadTimer isValid])
+        loadTimer = [CPTimer scheduledTimerWithTimeInterval:0.1 target:self selector:"checkLoad" userInfo:nil repeats:NO];
 }
 
 - (BOOL)acceptsFirstResponder
@@ -162,7 +189,13 @@ _EditorEvents = [
 - (BOOL)becomeFirstResponder
 {
     [self _didBeginEditing];
-    editor.focus();
+    if (_cursorPlaced)
+        editor.focus();
+    else
+    {
+        editor.focusAndPlaceCursorAtStart();
+        _cursorPlaced = YES;
+    }
     return YES;
 }
 
@@ -194,15 +227,28 @@ _EditorEvents = [
 */
 - (void)setEnabled:(BOOL)shouldBeEnabled
 {
+    if (enabled === shouldBeEnabled)
+        return;
+
     enabled = shouldBeEnabled;
+
+    [self _actualizeEnabledState];
+}
+
+- (void)_actualizeEnabledState
+{
     if (editor)
     {
-        editor.contentEditable = enabled ? 'true' : 'false';
+        var isEnabled = !editor.isUneditable();
+        if (!isEnabled && enabled)
+            editor.makeEditable();
+        else if (isEnabled && !enabled)
+            editor.makeUneditable();
+
         // When contentEditable is off we must disable wysihat event handlers
         // or they'll cause errors e.g. if a user clicks a disabled WKTextView.
-        var t = editor;
-        for (var i = 0; i < _EditorEvents.length; i++)
-        {
+        /*var t = editor;
+        for(var i=0; i<_EditorEvents.length; i++) {
             var ev = _EditorEvents[i];
             if (!enabled && t[ev] !== _CancelEvent)
             {
@@ -213,7 +259,7 @@ _EditorEvents = [
             {
                 t[ev] = [eventHandlerSwizzler objectForKey:ev];
             }
-        }
+        }*/
     }
 }
 
@@ -250,7 +296,41 @@ _EditorEvents = [
     return shouldFocusAfterAction;
 }
 
-- (void)setEditor:anEditor
+- (BOOL)tryToBecomeFirstResponder
+{
+    if (_isTryingToBecomeFirstResponder)
+        return YES;
+
+    var win = [self window];
+    if ([win firstResponder] === self)
+        return YES;
+
+    // We have to emulate select pieces of CPWindow's event handling
+    // here since the iframe bypasses the regular event handling.
+    var becameFirst = false;
+
+    _isTryingToBecomeFirstResponder = YES;
+    try
+    {
+        if ([self acceptsFirstResponder])
+        {
+            becameFirst = [win makeFirstResponder:self];
+            if (becameFirst)
+            {
+                if (![win isKeyWindow])
+                    [win makeKeyAndOrderFront:self];
+                [[CPRunLoop currentRunLoop] limitDateForMode:CPDefaultRunLoopMode];
+            }
+        }
+    } finally
+    {
+        _isTryingToBecomeFirstResponder = NO;
+    }
+
+    return becameFirst;
+}
+
+- (void)setEditor:(Object)anEditor
 {
     if (editor === anEditor)
         return;
@@ -259,7 +339,6 @@ _EditorEvents = [
         return;
 
     editor = anEditor;
-    _scrollDiv = editor.parentNode.parentNode;
     _iframe.allowTransparency = true;
 
     [self DOMWindow].document.body.style.backgroundColor = 'transparent';
@@ -269,35 +348,18 @@ _EditorEvents = [
     // editor.focus();
 
     suppressAutoFocus = YES;
-    [self setFontNameForSelection:WKTextViewDefaultFont];
+    //[self setFontNameForSelection:WKTextViewDefaultFont];
     suppressAutoFocus = NO;
 
     if (editor['WKTextView_Installed'] === undefined)
     {
-        var doc = [self DOMWindow].document;
+        var win = [self DOMWindow],
+            doc = win.document;
 
         var onmousedown = function(ev) {
-            if (!ev)
-                ev = window.event;
-            var win = [self window];
-            if ([win firstResponder] === self)
-                return YES;
-            // We have to emulate select pieces of CPWindow's event handling
-            // here since the iframe bypasses the regular event handling.
-            var becameFirst = false;
-            if ([self acceptsFirstResponder])
-            {
-                becameFirst = [win makeFirstResponder:self];
-                if (becameFirst)
-                {
-                    if (![win isKeyWindow])
-                        [win makeKeyAndOrderFront:self];
-                    [[CPRunLoop currentRunLoop] limitDateForMode:CPDefaultRunLoopMode];
-                }
-            }
             // If selection was successful, allow the event to continue propagate so that the
             // cursor is placed in the right spot.
-            return becameFirst;
+            return [self tryToBecomeFirstResponder];
         }
 
         defaultKeydown = doc.onkeydown;
@@ -339,7 +401,7 @@ _EditorEvents = [
         if (doc.addEventListener)
         {
             doc.addEventListener('mousedown', onmousedown, true);
-            doc.addEventListener('keydown', onkeydown, true);
+            editor.addEventListener('keydown', onkeydown, true);
             doc.body.addEventListener('scroll', onscroll, true);
         }
         else if (doc.attachEvent)
@@ -349,31 +411,41 @@ _EditorEvents = [
             doc.body.attachEvent('scroll', onscroll);
         }
 
-        editor.observe("field:change", function() {
+        editor.__fieldChangeExternal = function() {
             [self _didChange];
             // The normal run loop doesn't react to iframe events, so force immediate processing.
             [[CPRunLoop currentRunLoop] limitDateForMode:CPDefaultRunLoopMode];
-        });
-        editor.observe("selection:change", function() {
+        };
+        editor.__selectionChangeExternal = function()
+        {
             [self _cursorDidMove];
+
+            // Workaround for Firefox not firing our iframe mousedown handler - we have
+            // to do the first responder promotion here instead.
+            [self tryToBecomeFirstResponder];
+
             // The normal run loop doesn't react to iframe events, so force immediate processing.
             [[CPRunLoop currentRunLoop] limitDateForMode:CPDefaultRunLoopMode];
-        });
+        };
 
         editor['WKTextView_Installed'] = true;
     }
 
+    [self _actualizeEnabledState];
     [self _resizeWebFrame];
-    [self setEnabled:enabled];
 }
 
 - (JSObject)editor
 {
-    return editor;
+    // editor can never be active while hidden.
+    return [self isHiddenOrHasHiddenAncestor] ? nil : editor;
 }
 
 - (void)_updateScrollbar
 {
+    if (!_verticalScroller)
+        return;
+
     var scrollTop = 0,
         height = 1,
         frameHeight = CGRectGetHeight([self bounds]),
@@ -480,8 +552,9 @@ _EditorEvents = [
 
 - (void)_resizeWebFrame
 {
-    if (editor)
-        editor.style.minHeight = (CGRectGetHeight([self bounds])-(2+WKTextViewInnerPadding*2)) + "px";
+    if (editor && editor.getElement())
+//        editor.setMinHeight(CGRectGetHeight([self bounds]) - (2+WKTextViewInnerPadding*2));
+        editor.getElement().style.minHeight = (CGRectGetHeight([self bounds])-(2+WKTextViewInnerPadding*2)) + "px";
     [self _updateScrollbar];
 }
 
@@ -518,35 +591,22 @@ _EditorEvents = [
 
 - (CPString)htmlValue
 {
+    if (![self editor])
+        return _html;
 
-    if ([self editor] != nil)
-    return [self editor].innerHTML;
-    	
-    return _html;
+    return [self editor].getCleanContents();
 }
 
 - (void)setHtmlValue:(CPString)html
 {
-    [self willChangeValueForKey:@"htmlValue"];
-
     _html = html;
 	
     if ([self editor] != nil)
-        [self editor].innerHTML = html;
+        editor.setHtml(false, html, false, false);
+    else
+        _html = html;
 
-    [self _didChange];
-
-    [self didChangeValueForKey:@"htmlValue"];
-}
-
-- (CPString)textValue
-{
-    return [self editor].content();
-}
-
-- (void)setTextValue:(CPString)content
-{
-    [self editor].setContent(content);
+    _cursorPlaced = NO;
     [self _didChange];
 }
 
@@ -555,6 +615,7 @@ _EditorEvents = [
     if (shouldFocusAfterAction && !suppressAutoFocus)
     {
         [self DOMWindow].focus();
+        editor.focus();
     }
 }
 
@@ -567,85 +628,96 @@ _EditorEvents = [
 
 - (void)insertHtml:(CPString)html
 {
-    [self editor].insertHTML(html);
+    [CPException raise:CPUnsupportedMethodException reason:"not available with google-closure editor yet"];
+
+    /*[self editor].insertHTML(html);
     [self _didChange];
-    [self _didPerformAction];
+    [self _didPerformAction];*/
 }
 
 - (@action)boldSelection:(id)sender
 {
-    [self editor].boldSelection();
+    editor.execCommand(editor.Command.BOLD, null);
     [self _didPerformAction];
 }
 
 - (@action)underlineSelection:(id)sender
 {
-    [self editor].underlineSelection();
+    editor.execCommand(editor.Command.UNDERLINE, null);
     [self _didPerformAction];
 }
 
 - (@action)italicSelection:(id)sender
 {
-    [self editor].italicSelection();
+    editor.execCommand(editor.Command.ITALIC, null);
     [self _didPerformAction];
 }
 
 - (@action)strikethroughSelection:(id)sender
 {
-    [self editor].strikethroughSelection();
+    editor.execCommand(editor.Command.STRIKE_THROUGH, null);
     [self _didPerformAction];
 }
 
 - (@action)alignSelectionLeft:(id)sender
 {
-    [self editor].alignSelection('left');
+    editor.execCommand(editor.Command.JUSTIFY_LEFT, null);
     [self _didPerformAction];
 }
 
 - (@action)alignSelectionRight:(id)sender
 {
-    [self editor].alignSelection('right');
+    editor.execCommand(editor.Command.JUSTIFY_RIGHT, null);
     [self _didPerformAction];
 }
 
 - (@action)alignSelectionCenter:(id)sender
 {
-    [self editor].alignSelection('center');
+    editor.execCommand(editor.Command.JUSTIFY_CENTER, null);
     [self _didPerformAction];
 }
 
 - (@action)alignSelectionFull:(id)sender
 {
-    [self editor].alignSelection('full');
+    editor.execCommand(editor.Command.JUSTIFY_FULL, null);
     [self _didPerformAction];
 }
 
 - (@action)linkSelection:(id)sender
 {
     // TODO Show a sheet asking for a URL to link to.
+    editor.execCommand(editor.Command.LINK, "http://www.wireload.net");
+    [self _didPerformAction];
 }
 
 - (void)linkSelectionToURL:(CPString)aUrl
 {
-    [self editor].linkSelection(aUrl);
+    var appWindow = editor.getAppWindow(),
+        prompt = appWindow['prompt'];
+
+    appWindow['prompt'] = function() {
+      return aUrl;
+    };
+
+    editor.execCommand(editor.Command.LINK, null);
+    appWindow['prompt'] = prompt;
     [self _didPerformAction];
 }
 
 - (void)unlinkSelection:(id)sender
 {
-    [self editor].unlinkSelection();
-    [self _didPerformAction];
+    [self linkSelectionToURL:nil];
 }
 
 - (@action)insertOrderedList:(id)sender
 {
-    [self editor].insertOrderedList();
+    editor.execCommand(editor.Command.ORDERED_LIST, null);
     [self _didPerformAction];
 }
 
 - (@action)insertUnorderedList:(id)sender
 {
-    [self editor].insertUnorderedList();
+    editor.execCommand(editor.Command.UNORDERED_LIST, null);
     [self _didPerformAction];
 }
 
@@ -656,21 +728,21 @@ _EditorEvents = [
 
 - (void)insertImageWithURL:(CPString)aUrl
 {
-    [self editor].insertImage(aUrl);
+    editor.execCommand(editor.Command.IMAGE, aUrl);
     [self _didPerformAction];
 }
 
-- (void)setFontNameForSelection:(CPString)font
+- (void)setFontNameForSelection:(CPString)aFont
 {
-    lastFont = font;
-    [self editor].fontSelection(font);
+    lastFont = aFont;
+    editor.execCommand(editor.Command.FONT_FACE, aFont);
     [self _didPerformAction];
 }
 
 - (int)fontSizeRaw
 {
     try {
-        return [self DOMWindow].document.queryCommandValue('fontsize');
+        return editor.queryCommandValue(editor.Command.FONT_SIZE);
     } catch(e) {
         return "16px";
     }
@@ -693,9 +765,9 @@ _EditorEvents = [
     Set the font size for the selected text. Size is specified
     as a number between 1-6 which corresponds to small through xx-large.
 */
-- (void)setFontSizeForSelection:(int)size
+- (void)setFontSizeForSelection:(int)aSize
 {
-    [self editor].fontSizeSelection(size);
+    editor.execCommand(editor.Command.FONT_SIZE, aSize);
     [self _didPerformAction];
 }
 
@@ -703,7 +775,7 @@ _EditorEvents = [
 {
     try
     {
-        var fontName = [self DOMWindow].document.queryCommandValue('fontname');
+        var fontName = editor.queryCommandValue(editor.Command.FONT_FACE);
     } catch(e) {
         return lastFont;
     }
@@ -724,9 +796,9 @@ _EditorEvents = [
 {
     var colorString;
     try {
-        colorString = [self DOMWindow].document.queryCommandValue('forecolor');
+        colorString = editor.queryCommandValue(editor.Command.FONT_COLOR);
     } catch(e) {
-        console.error(e);
+        CPLog.warning(e);
     }
     // Avoid creating a new Color instance every time the cursor moves by reusing the last
     // instance.
@@ -739,6 +811,6 @@ _EditorEvents = [
 
 - (void)setColorForSelection:(CPColor)aColor
 {
-    [self editor].colorSelection([aColor hexString]);
+    editor.execCommand(editor.Command.FONT_COLOR, [aColor hexString]);
     [self _didPerformAction];
 }
